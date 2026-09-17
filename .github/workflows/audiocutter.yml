@@ -1,0 +1,66 @@
+name: Split Audio into 20 Min Parts
+
+on:
+  workflow_dispatch:
+    inputs:
+      audio_url:
+        description: 'অডিওর Direct Download Link দাও'
+        required: true
+        type: string
+      segment_minutes:
+        description: 'কত মিনিট করে কাটবে?'
+        required: false
+        default: '20'
+        type: string
+
+jobs:
+  split-audio:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
+
+      - name: Download Audio from Direct Link
+        run: |
+          echo "Downloading from: ${{ inputs.audio_url }}"
+          # -L = follow redirect, -o = output file
+          # আমরা এক্সটেনশন বের করার চেষ্টা করবো, না পেলে mp3 ধরবো
+          curl -L --fail -o input_audio "${{ inputs.audio_url }}"
+          ls -lh input_audio
+          # ffprobe দিয়ে ফরম্যাট চেক
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 input_audio || true
+
+      - name: Split Audio into 20 Minute Chunks
+        run: |
+          mkdir -p output
+          SEGMENT_TIME=$((${{ inputs.segment_minutes }} * 60))
+          echo "Segment time: $SEGMENT_TIME seconds"
+
+          # এই কমান্ডটা অডিওকে ২০ মিনিট পর পর কাটবে
+          # -f segment = ভাগ ভাগ করো
+          # -segment_time 1200 = 1200 সেকেন্ড = 20 মিনিট
+          # -c copy = রি-এনকোড ছাড়া কাটবে, তাই ১০০% কোয়ালিটি থাকবে এবং সুপার ফাস্ট
+          # যদি -c copy তে error দেয়, তাহলে নিচের ২য় কমান্ডটা ব্যবহার করবে
+          
+          ffmpeg -i input_audio -f segment -segment_time $SEGMENT_TIME -c copy -reset_timestamps 1 output/part_%03d.mp3
+
+          # যদি উপরেরটা ফেইল করে (যেমন m4a, wav, ogg ফাইলের জন্য) তাহলে এটা ব্যবহার করো:
+          # ffmpeg -i input_audio -f segment -segment_time $SEGMENT_TIME -c:a libmp3lame -b:a 128k -reset_timestamps 1 output/part_%03d.mp3
+
+          echo "Split complete:"
+          ls -lh output/
+
+      - name: Upload Splitted Files as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: splitted-audio-20min-parts
+          path: output/
+          retention-days: 5
+          compression-level: 0
